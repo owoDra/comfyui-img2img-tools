@@ -203,6 +203,11 @@ EXAMPLE_NODE_DEFINE_JSON = """
         "param": "steps",
         "id": "5",
         "default": 15
+    },
+    "Denoise": {
+        "param": "denoise",
+        "id": "5",
+        "default": 0.7
     }
 }
 """
