@@ -27,7 +27,7 @@ EXAMPLE_WORKFLOW_JSON = """
 {
   "1": {
     "inputs": {
-      "ckpt_name": "waiNSFWIllustrious_v140.safetensors"
+      "ckpt_name": ""
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -167,7 +167,7 @@ EXAMPLE_NODE_DEFINE_JSON = """
     "Model": {
         "param": "ckpt_name",
         "id": "1",
-        "default": "waiNSFWIllustrious_v140.safetensors"
+        "default": ""
     },
     "Image": {
         "param": "data",
