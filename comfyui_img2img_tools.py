@@ -23,15 +23,6 @@ from pydantic import BaseModel, Field
 Constants
 =========================== """
 
-LABEL_MODEL = "Model"
-LABEL_IMAGE = "Image"
-LABEL_WIDTH = "Width"
-LABEL_HEIGHT = "Height"
-LABEL_POSITIVE_PROMPT = "PositivePrompt"
-LABEL_NEGATIVE_PROMPT = "NegativePrompt"
-LABEL_SEED = "Seed"
-LABEL_STEPS = "Steps"
-
 EXAMPLE_WORKFLOW_JSON = """
 {
   "1": {
@@ -173,42 +164,42 @@ EXAMPLE_WORKFLOW_JSON = """
 """
 EXAMPLE_NODE_DEFINE_JSON = """
 {
-    "{LABEL_MODEL}": {
+    "Model": {
         "param": "ckpt_name",
         "id": "1",
         "default": "waiNSFWIllustrious_v140.safetensors"
     },
-    "{LABEL_IMAGE}": {
+    "Image": {
         "param": "data",
         "id": "6",
         "default": ""
     },
-    "{LABEL_WIDTH}": {
+    "Width": {
         "param": "width",
         "id": "9",
         "default": "512"
     },
-    "{LABEL_HEIGHT}": {
+    "Height": {
         "param": "height",
         "id": "9",
         "default": "512"
     },
-    "{LABEL_POSITIVE_PROMPT}": {
+    "PositivePrompt": {
         "param": "text",
         "id": "7",
         "default": "masterpiece,best quality,amazing quality"
     },
-    "{LABEL_NEGATIVE_PROMPT}": {
+    "NegativePrompt": {
         "param": "text",
         "id": "8",
         "default": "bad quality,worst quality,worst detail,sketch,censor"
     },
-    "{LABEL_SEED}": {
+    "Seed": {
         "param": "seed",
         "id": "5",
         "default": "-1"
     },
-    "{LABEL_STEPS}": {
+    "Steps": {
         "param": "steps",
         "id": "5",
         "default": "15"
@@ -221,7 +212,6 @@ EXAMPLE_API_BASEURL = "http://localhost:8188"
 """ ===========================
 Helpers
 =========================== """
-
 
 class EventEmitter:
     def __init__(self, event_emitter: Callable[[dict], Any] = None):
@@ -266,7 +256,7 @@ class WorkflowHelper:
         self.workflow_endpoint = f"{api_baseurl}/prompt"
         self.history_endpoint = f"{api_baseurl}/history"
         self.image_endpoint = f"{api_baseurl}/view"
-        self.default_workflow = json.loads(workflow_json_str)
+        self.workflow = json.loads(workflow_json_str)
         self.node_define = json.loads(node_define_json_str)
         self.req_timeout = req_timeout
         self.req_interval = req_interval
@@ -277,80 +267,39 @@ class WorkflowHelper:
                 node_param = node_def["param"]
                 node_default = node_def["default"]
 
-                self.default_workflow[node_id]["inputs"][node_param] = node_default
+                self.workflow[node_id]["inputs"][node_param] = node_default
 
             except KeyError:
                 return f"Error: Invalid NodeDef or Workflow"
 
     async def execute(
-        self,
-        prompt: str,
-        image_base64: str,
-        positive: Optional[str] = None,
-        negative: Optional[str] = None,
-        model: Optional[str] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        seed: Optional[int] = None,
-        steps: Optional[int] = None,
-    ):
-        workflow = self.default_workflow
-
+        self, prompt: str, image_base64: str,
+    ) -> str:
         # build workflow
         try:
-            node_id = self.node_define.items[LABEL_POSITIVE_PROMPT]["id"]
-            node_param = self.node_define.items[LABEL_POSITIVE_PROMPT]["param"]
-            workflow[node_id]["inputs"][node_param] += f",{prompt}"
+            node_id = self.node_define["PositivePrompt"]["id"]
+            node_param = self.node_define["PositivePrompt"]["param"]
+            self.workflow[node_id]["inputs"][node_param] += f",{prompt}"
 
-            if positive:
-                workflow[node_id]["inputs"][node_param] += f",{positive}"
+            node_id = self.node_define["Image"]["id"]
+            node_param = self.node_define["Image"]["param"]
+            self.workflow[node_id]["inputs"][node_param] += image_base64
 
-            node_id = self.node_define.items[LABEL_IMAGE]["id"]
-            node_param = self.node_define.items[LABEL_IMAGE]["param"]
-            workflow[node_id]["inputs"][node_param] += image_base64
+            node_id = self.node_define["Seed"]["id"]
+            node_param = self.node_define["Seed"]["param"]
+            if self.workflow[node_id]["inputs"][node_param] == "-1":
+                self.workflow[node_id]["inputs"][node_param] = str(random.randint(0, 2**32 - 1))
 
-            if negative:
-                node_id = self.node_define.items[LABEL_NEGATIVE_PROMPT]["id"]
-                node_param = self.node_define.items[LABEL_NEGATIVE_PROMPT]["param"]
-                workflow[node_id]["inputs"][node_param] += f",{negative}"
-
-            if model:
-                node_id = self.node_define.items[LABEL_MODEL]["id"]
-                node_param = self.node_define.items[LABEL_MODEL]["param"]
-                workflow[node_id]["inputs"][node_param] = model
-
-            if width:
-                node_id = self.node_define.items[LABEL_WIDTH]["id"]
-                node_param = self.node_define.items[LABEL_WIDTH]["param"]
-                workflow[node_id]["inputs"][node_param] = width
-
-            if height:
-                node_id = self.node_define.items[LABEL_HEIGHT]["id"]
-                node_param = self.node_define.items[LABEL_HEIGHT]["param"]
-                workflow[node_id]["inputs"][node_param] = height
-
-            if seed:
-                node_id = self.node_define.items[LABEL_SEED]["id"]
-                node_param = self.node_define.items[LABEL_SEED]["param"]
-                workflow[node_id]["inputs"][node_param] = seed
-
-            if workflow[node_id]["inputs"][node_param] == -1:
-                workflow[node_id]["inputs"][node_param] = random.randint(0, 2**32 - 1)
-
-            if steps:
-                node_id = self.node_define.items[LABEL_STEPS]["id"]
-                node_param = self.node_define.items[LABEL_STEPS]["param"]
-                workflow[node_id]["inputs"][node_param] = steps
-
-        except KeyError:
-            return f"Error: Invalid execution parameters"
+        except KeyError as e:
+            return f"Error: Invalid execution parameters: {e}"
 
         # request workflow
         try:
-            response = await loop.run_in_executor(
+            current_loop = asyncio.get_running_loop()
+            response = await current_loop.run_in_executor(
                 None,
                 lambda: requests.post(
-                    self.workflow_endpoint, json=workflow, timeout=self.req_timeout + 10
+                    self.workflow_endpoint, json={"prompt": self.workflow}, timeout=self.req_timeout + 10
                 ),
             )
             response.raise_for_status()
@@ -362,7 +311,7 @@ class WorkflowHelper:
             prompt_id = prompt_response["prompt_id"]
 
         except requests.exceptions.RequestException as e:
-            return f"Error: Workflow Request Failed: {e}"
+            return f"Error: Workflow Request Failed: {e} | {self.workflow}"
 
         # request image
         history_endpoint = f"{self.history_endpoint}/{prompt_id}"
@@ -373,13 +322,14 @@ class WorkflowHelper:
         for retries in range(max_retries):
             await asyncio.sleep(self.req_interval)
             try:
-                history_response = await loop.run_in_executor(
+                current_loop = asyncio.get_running_loop()
+                history_response = await current_loop.run_in_executor(
                     None,
                     lambda: requests.get(history_endpoint, timeout=self.req_timeout),
                 )
 
-                if hist_response.status_code == 200:
-                    history_data = hist_response.json()
+                if history_response.status_code == 200:
+                    history_data = history_response.json()
                     if prompt_id in history_data and history_data[prompt_id].get(
                         "outputs"
                     ):
@@ -405,8 +355,7 @@ class ImageHelper:
         pass
 
     def _extract_potential_image_source(
-        self,
-        msg: Dict[str, Any],
+        self, msg: Dict[str, Any],
     ) -> Optional[str]:
         content = msg.get("content")
 
@@ -421,87 +370,85 @@ class ImageHelper:
                         return img_url_data
         return None
 
-    def _extract_all_potential_image_sources(
+    def _1_extract_all_potential_image_sources(
         self, messages_history: List[Dict[str, Any]]
     ) -> List[str]:
         sources: List[str] = []
 
         for msg in messages_history:
-            url = self._extract_potential_image_source
+            url = self._extract_potential_image_source(msg)
             if url:
                 sources.append(url)
 
         return sources
 
-    def _select_source(
-        self, all_sources: List[str], selector: Optional[str], regex: Optional[str]
-    ) -> Tuple[Optional[str], Optional[str]]:
-        if not all_sources:
-            return None, "Error: No sources available"
+    def _2_resolve_selector(
+        self, selector: Any
+    ) -> int:
+        NOT_FOUND = -2
 
-        if selector:
-            if regex:
-                match = re.search(regex, selector)
+        if isinstance(selector, str):
+            match = re.search(r'\d+', selector)
+            if match:
+                return int(match.group(0))
 
-                if match:
-                    number_str = match.group(1)
-                    number = int(number_str)
+        elif isinstance(selector, int):
+            return selector
 
-                    if 0 <= number < len(all_sources):
-                        return all_sources[number], None
+        elif isinstance(selector, float):
+            return int(selector)
 
-            else:
-                return all_sources[int(selector)], None
+        elif isinstance(selector, List):
+            for item in selector:
+                value = self._resolve_selector(item)
+                if value is not NOT_FOUND:
+                    return value
 
-        return all_sources[-1], None
+        return NOT_FOUND
 
-    def _get_base64_data_from_data_uri(
-        self,
-        source: str,
-    ) -> Tuple[Optional[str], Optional[str]]:
-        """
-        :param source: The data URI string (e.g., "data:image/png;base64,...").
-        :return: A tuple containing:
-                    - The Base64 encoded data string (data part only), or None on failure.
-                    - The original full data URI for preview, or None on failure.
-                    - An error message string if an error occurred, otherwise None.
-        """
-
-        if not source.startswith("data:") or ";base64," not in source:
-            return None, "Error: URI is not Base64 data"
-
+    def _3_select_source(
+        self, all_sources: List[str], selector: int
+    ) -> Optional[str]:
+        if 0 <= selector < len(all_sources):
+            return all_sources[selector]
+        
         try:
-            data_part = source.split(",", 1)[1]
-            return data_part, None
+            return all_sources[-1]
+
         except IndexError:
-            err_msg = "Error: No data present in URI"
-        except Exception as e:
-            err_msg = f"Error: {e}"
-        return None, err_msg
+            return None
+
+    def _4_get_base64_data_source(
+        self, source: Optional[str],
+    ) -> Optional[str]:
+        if not source:
+            return None
+
+        if source.startswith("data:") and ";base64," in source:
+            try:
+                return source.split(",", 1)[1]
+            except IndexError:
+                return None
+
+        return None
 
     def get_image_as_base64_data(
-        self,
-        messages_history: List[Dict[str, Any]],
-        selector: Optional[str],
-        regex: Optional[str],
+        self, messages_history: List[Dict[str, Any]], selector: Any,
     ) -> str:
-        all_sources = self._extract_all_potential_image_sources(messages_history)
-        source, err = self._select_source(all_sources, selector, regex)
+        all_sources       = self._1_extract_all_potential_image_sources(messages_history)
+        resolved_selector = self._2_resolve_selector(selector)
+        source            = self._3_select_source(all_sources, resolved_selector)
+        base64_data       = self._4_get_base64_data_source(source)
 
-        if err:
-            return err
+        if base64_data:
+            return base64_data
 
-        if source.startswith("data:"):
-            data, err = self._get_base64_data_from_data_uri(source)
-            return data if data else err
-
-        return "Error: Could not get base64 data"
+        return "Error: Could not get image as base64 data"
 
 
 """ ===========================
 Tool
 =========================== """
-
 
 class Tools:
     class Valves(BaseModel):
@@ -510,10 +457,10 @@ class Tools:
             default=EXAMPLE_API_BASEURL, description=EXAMPLE_API_BASEURL
         )
         COMFYUI_IMG2IMG_WORKFLOW_JSON: str = Field(
-            default=EXAMPLE_WORKFLOW_JSON, description=EXAMPLE_WORKFLOW_JSON
+            default=EXAMPLE_WORKFLOW_JSON, description="Enter workflow json here"
         )
         COMFYUI_IMG2IMG_NODE_DEFINE_JSON: str = Field(
-            default=EXAMPLE_NODE_DEFINE_JSON, description=EXAMPLE_NODE_DEFINE_JSON
+            default=EXAMPLE_NODE_DEFINE_JSON, description="Allowed labels: Model, Image, Width, Height, PositivePrompt, NegativePrompt, Seed, Steps"
         )
 
         # Request Settings
@@ -524,34 +471,13 @@ class Tools:
             default=5, description="Request Interval (sec)"
         )
 
-        # Prompt Settings
-        IMAGE_SELECTOR_PATTERN: str = Field(
-            default=r"\[img-(\d+)\]",
-            description="Regex to get the value from the image number passed from LLM",
-        )
-
     def __init__(self):
         self.valves = self.Valves()
-
-        self.workflow = WorkflowHelper(
-            self.valves.COMFYUI_API_BASEURL,
-            self.valves.COMFYUI_IMG2IMG_WORKFLOW_JSON,
-            self.valves.COMFYUI_IMG2IMG_NODE_DEFINE_JSON,
-            self.valves.REQUEST_TIMEOUT_SECONDS,
-            self.valves.REQUEST_INTERVAL_SECONDS,
-        )
 
     async def img2img(
         self,
         prompt: str,
-        image_selector: Optional[str] = None,
-        positive: Optional[str] = None,
-        negative: Optional[str] = None,
-        model: Optional[str] = None,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        seed: Optional[int] = None,
-        steps: Optional[int] = None,
+        image_selector: Any,
         __messages__: List[Dict[str, Any]] = None,
         __event_emitter__: Callable[[dict], Any] = None,
     ) -> str:
@@ -559,36 +485,28 @@ class Tools:
         Generate an image from a given prompt and a number of attached images
 
         :param prompt: prompt to use for image generation
-        :param image_selector: User's preference for selecting an image source from history.
-        :param positive: Additional positive prompts used for image generation.
-        :param negative: Additional negative prompts used for image generation.
-        :param model: Name of the generative model used to generate the image.
-        :param width: Width of the generated image.
-        :param height: Height of the generated image.
-        :param seed: Seed value used for image generation.
-        :param steps: Number of steps used to generate images.
+        :param image_selector: index for selecting an image source from history.
         """
 
-        event_emitter = EventEmitter(__event_emitter__)
-
-        data = ImageHelper().get_image_as_base64_data(
-            __messages__, image_selector, self.valves.IMAGE_SELECTOR_PATTERN
+        # 1. Create helper instances
+        event_emitter   = EventEmitter(__event_emitter__)
+        image_helper    = ImageHelper()
+        workflow_helper = WorkflowHelper(
+            self.valves.COMFYUI_API_BASEURL,
+            self.valves.COMFYUI_IMG2IMG_WORKFLOW_JSON,
+            self.valves.COMFYUI_IMG2IMG_NODE_DEFINE_JSON,
+            self.valves.REQUEST_TIMEOUT_SECONDS,
+            self.valves.REQUEST_INTERVAL_SECONDS,
         )
+
+        # 2. Retrieve image data as base64
+        data = image_helper.get_image_as_base64_data(__messages__, image_selector)
 
         if data.startswith("Error:"):
             return data
 
-        result = self.workflow.execute(
-            prompt,
-            data,
-            positive,
-            negative,
-            model,
-            width,
-            height,
-            seed,
-            steps,
-        )
+        # 3. Execute workflow
+        result = await workflow_helper.execute(prompt, data)
 
         if result.startswith("Error:"):
             return result
