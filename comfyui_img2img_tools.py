@@ -177,32 +177,32 @@ EXAMPLE_NODE_DEFINE_JSON = """
     "Width": {
         "param": "width",
         "id": "9",
-        "default": "512"
+        "default": 512
     },
     "Height": {
         "param": "height",
         "id": "9",
-        "default": "512"
+        "default": 512
     },
     "PositivePrompt": {
         "param": "text",
-        "id": "7",
+        "id": "8",
         "default": "masterpiece,best quality,amazing quality"
     },
     "NegativePrompt": {
         "param": "text",
-        "id": "8",
+        "id": "7",
         "default": "bad quality,worst quality,worst detail,sketch,censor"
     },
     "Seed": {
         "param": "seed",
         "id": "5",
-        "default": "-1"
+        "default": -1
     },
     "Steps": {
         "param": "steps",
         "id": "5",
-        "default": "15"
+        "default": 15
     }
 }
 """
@@ -283,12 +283,12 @@ class WorkflowHelper:
 
             node_id = self.node_define["Image"]["id"]
             node_param = self.node_define["Image"]["param"]
-            self.workflow[node_id]["inputs"][node_param] += image_base64
+            self.workflow[node_id]["inputs"][node_param] = image_base64
 
             node_id = self.node_define["Seed"]["id"]
             node_param = self.node_define["Seed"]["param"]
-            if self.workflow[node_id]["inputs"][node_param] == "-1":
-                self.workflow[node_id]["inputs"][node_param] = str(random.randint(0, 2**32 - 1))
+            if self.workflow[node_id]["inputs"][node_param] == -1:
+                self.workflow[node_id]["inputs"][node_param] = random.randint(0, 2**32 - 1)
 
         except KeyError as e:
             return f"Error: Invalid execution parameters: {e}"
@@ -299,7 +299,7 @@ class WorkflowHelper:
             response = await current_loop.run_in_executor(
                 None,
                 lambda: requests.post(
-                    self.workflow_endpoint, json={"prompt": self.workflow}, timeout=self.req_timeout + 10
+                    self.workflow_endpoint, json={ "prompt": self.workflow }, timeout=self.req_timeout + 10
                 ),
             )
             response.raise_for_status()
