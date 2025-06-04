@@ -23,11 +23,10 @@ from pydantic import BaseModel, Field
 Constants
 =========================== """
 
-EXAMPLE_WORKFLOW_JSON = """
-{
+EXAMPLE_WORKFLOW_JSON = """{
   "1": {
     "inputs": {
-      "ckpt_name": ""
+      "ckpt_name": "model.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
@@ -162,57 +161,55 @@ EXAMPLE_WORKFLOW_JSON = """
   }
 }
 """
-EXAMPLE_NODE_DEFINE_JSON = """
-{
+EXAMPLE_NODE_DEFINE_JSON = """{
     "Model": {
         "param": "ckpt_name",
-        "id": "1",
-        "default": ""
+        "id": "1"
     },
     "Image": {
         "param": "data",
-        "id": "6",
-        "default": ""
+        "id": "6"
     },
     "Width": {
         "param": "width",
-        "id": "9",
-        "default": 512
+        "id": "9"
     },
     "Height": {
         "param": "height",
-        "id": "9",
-        "default": 512
+        "id": "9"
     },
     "PositivePrompt": {
         "param": "text",
-        "id": "8",
-        "default": "masterpiece,best quality,amazing quality"
+        "id": "8"
     },
     "NegativePrompt": {
         "param": "text",
-        "id": "7",
-        "default": "bad quality,worst quality,worst detail,sketch,censor"
+        "id": "7"
     },
     "Seed": {
         "param": "seed",
-        "id": "5",
-        "default": -1
+        "id": "5"
     },
     "Steps": {
         "param": "steps",
-        "id": "5",
-        "default": 15
+        "id": "5"
     },
     "Denoise": {
         "param": "denoise",
-        "id": "5",
-        "default": 0.7
+        "id": "5"
     }
 }
 """
 EXAMPLE_API_BASEURL = "http://localhost:8188"
 
+EXAMPLE_WIDTH  = 512
+EXAMPLE_HEIGHT = 512
+EXAMPLE_SEED   = -1
+EXAMPLE_STEPS  = 15
+
+EXAMPLE_DENOISE_OVERRIDE       = 0.0
+EXAMPLE_POSITIVE_SYSTEM_PROMPT = "masterpiece,best quality,amazing quality"
+EXAMPLE_NEGATIVE_SYSTEM_PROMPT = "bad quality,worst quality,worst detail,sketch,censor"
 
 """ ===========================
 Exception
@@ -230,31 +227,121 @@ class ToolError(Exception):
 Helpers
 =========================== """
 
-class EventEmitter:
-    def __init__(self, event_emitter: Callable[[dict], Any]):
-        self.event_emitter = event_emitter
+class ParameterResolver:
+    def __init__(self):
+        pass
 
-    async def emit(self, description="Unknown state", done=False, hidden=False):
-        if self.event_emitter:
-            await self.event_emitter(
-                {
-                    "type": "status",
-                    "data": {
-                        "description": description,
-                        "done": done,
-                        "hidden": hidden
-                    },
-                }
-            )
+    def resolve_image_selector(self, selector: Any) -> int:
+        NOT_FOUND = -2
 
-    async def emit_message(self, content="msg"):
-        if self.event_emitter:
-            await self.event_emitter(
-                {
-                    "type": "chat:message:delta",
-                    "data": { "content": content },
-                }
-            )
+        if isinstance(selector, str):
+            match = re.search(r"\d+", selector)
+            if match:
+                return int(match.group(0))
+
+        elif isinstance(selector, int):
+            return selector
+
+        elif isinstance(selector, float):
+            return int(selector)
+
+        elif isinstance(selector, List):
+            for item in selector:
+                value = self.resolve_image_selector(item)
+                if value is not NOT_FOUND:
+                    return value
+
+        return NOT_FOUND
+
+    def resolve_model(self, model: str, model_override: str) -> str:
+        return model_override if model_override != "" else model
+
+    def resolve_denoise(self, denoise: float, denoise_override: float) -> float:
+        final_value = denoise_override if denoise_override != 0.0 else denoise
+        if final_value < 0.0:
+            return 0.0
+        elif final_value > 1.0:
+            return 1.0
+        return final_value
+    
+    def resolve_prompt(self, system_prompt: str, prompt: str) -> str:
+        return f"{system_prompt},{prompt}"
+    
+    def resolve_seed(self, seed: int) -> int:
+        return random.randint(0, 2**32 - 1) if seed == -1 else seed
+
+class Base64ImageResolver:
+    def __init__(self):
+        pass
+
+    def _extract_potential_image_source(
+        self,
+        msg: Dict[str, Any],
+    ) -> Optional[str]:
+        content = msg.get("content")
+
+        if isinstance(content, list):
+            for item in content:
+                if item.get("type") == "image_url":
+                    img_url_data = item.get("image_url")
+
+                    if isinstance(img_url_data, dict):
+                        return img_url_data.get("url")
+                    elif isinstance(img_url_data, str):
+                        return img_url_data
+        return None
+
+    def _1_extract_all_potential_image_sources(
+        self, messages_history: Optional[List[Dict[str, Any]]]
+    ) -> List[str]:
+        sources: List[str] = []
+
+        if messages_history:
+            for msg in messages_history:
+                url = self._extract_potential_image_source(msg)
+                if url:
+                    sources.append(url)
+
+        return sources
+
+    def _2_select_source(self, all_sources: List[str], selector: int) -> Optional[str]:
+        if 0 <= selector < len(all_sources):
+            return all_sources[selector]
+
+        try:
+            return all_sources[-1]
+
+        except IndexError:
+            return None
+
+    def _3_get_base64_data_source(
+        self,
+        source: Optional[str],
+    ) -> Optional[str]:
+        if not source:
+            return None
+
+        if source.startswith("data:") and ";base64," in source:
+            try:
+                return source.split(",", 1)[1]
+            except IndexError:
+                return None
+
+        return None
+
+    def resolve(
+        self,
+        messages_history: Optional[List[Dict[str, Any]]],
+        resolved_selector: int,
+    ) -> str:
+        all_sources = self._1_extract_all_potential_image_sources(messages_history)
+        source      = self._2_select_source(all_sources, resolved_selector)
+        base64_data = self._3_get_base64_data_source(source)
+
+        if base64_data:
+            return base64_data
+
+        raise ToolError("Could not get image as base64 data")
 
 class WorkflowProcesor:
     def __init__(
@@ -273,34 +360,40 @@ class WorkflowProcesor:
         self.req_timeout        = req_timeout
         self.req_interval       = req_interval
 
-        self.result = ""
+    def _build_param(self, label: str, value: Any):
+        try:
+            node_def   = self.node_define[label]
+            node_id    = node_def["id"]
+            node_param = node_def["param"]
 
-    def _1_build_workflow(self, prompt: str, image_base64: str):
-        for label, node_def in self.node_define.items():
-            try:
-                node_id    = node_def["id"]
-                node_param = node_def["param"]
-                node_value = node_def["default"]
+            self.workflow[node_id]["inputs"][node_param] = value
 
-                if label == "PositivePrompt":
-                    node_value += f",{prompt}"
+        except KeyError as e:
+            raise ToolError(f"Invalid NodeDef or Workflow | {e}")
 
-                elif label == "Image":
-                    node_value = image_base64
-
-                elif label == "Seed":
-                    if node_value is -1:
-                        node_value = random.randint(0, 2**32 - 1)
-
-                self.workflow[node_id]["inputs"][node_param] = node_value
-
-                if label != "Image":
-                    self.result += f"{label}: {node_value}, "
-
-            except KeyError as e:
-                raise ToolError(f"Invalid NodeDef or Workflow | {e}")
-
-    async def _2_request_workflow(self) -> str:
+    def build(
+        self, 
+        image_base64: str,
+        positive_prompt: str,
+        negative_prompt: str,
+        denoise: float,
+        model: str, 
+        seed: int,
+        steps: int,
+        width: int,
+        height: int,
+    ):
+        self._build_param("Model", model)
+        self._build_param("Image", image_base64)
+        self._build_param("Width", width)
+        self._build_param("Height", height)
+        self._build_param("PositivePrompt", positive_prompt)
+        self._build_param("NegativePrompt", negative_prompt)
+        self._build_param("Seed", seed)
+        self._build_param("Steps", steps)
+        self._build_param("Denoise", denoise)
+        
+    async def _1_request_workflow(self) -> str:
         try:
             response = await asyncio.get_running_loop().run_in_executor(
                 None,
@@ -317,7 +410,7 @@ class WorkflowProcesor:
         except requests.exceptions.RequestException as e:
             raise ToolError(f"Workflow Request Failed | {e} | {self.workflow}")
 
-    async def _3_wait_result(self, prompt_id: str) -> str:
+    async def _2_wait_result(self, prompt_id: str) -> str:
         history_endpoint = f"{self.history_endpoint}/{prompt_id}"
         max_retries = (self.req_timeout // self.req_interval if self.req_interval > 0 else 1)
 
@@ -341,7 +434,7 @@ class WorkflowProcesor:
                                         filename = img_data["filename"]
                                         subfolder = img_data.get("subfolder", "")
                                         img_url = f"{self.image_endpoint}?filename={requests.utils.quote(filename)}&subfolder={requests.utils.quote(subfolder)}&type=output"
-                                        return f"![]({img_url})"
+                                        return img_url
 
             except requests.exceptions.Timeout:
                 pass
@@ -350,111 +443,25 @@ class WorkflowProcesor:
             
         raise ToolError("Image Request Timeout")
 
-    async def execute(
-        self,
-        prompt: str,
-        image_base64: str,
-    ) -> str:
-        self._1_build_workflow(prompt, image_base64)
-        prompt_id = await self._2_request_workflow()
-        image_url = await self._3_wait_result(prompt_id)
-        return f"{self.result}Image: {image_url}" 
+    async def execute(self) -> str:
+        prompt_id = await self._1_request_workflow()
+        image_url = await self._2_wait_result(prompt_id)
+        return f"![]({image_url})"
         
-class Base64ImageProcesor:
-    def __init__(self):
-        pass
-
-    def _extract_potential_image_source(
+class ResultFormatter:
+    def __init__(
         self,
-        msg: Dict[str, Any],
-    ) -> Optional[str]:
-        content = msg.get("content")
-
-        if isinstance(content, list):
-            for item in content:
-                if item.get("type") == "image_url":
-                    img_url_data = item.get("image_url")
-
-                    if isinstance(img_url_data, dict):
-                        return img_url_data.get("url")
-                    elif isinstance(img_url_data, str):
-                        return img_url_data
-        return None
-
-    def _1_extract_all_potential_image_sources(
-        self, messages_history: List[Dict[str, Any]]
-    ) -> List[str]:
-        sources: List[str] = []
-
-        for msg in messages_history:
-            url = self._extract_potential_image_source(msg)
-            if url:
-                sources.append(url)
-
-        return sources
-
-    def _2_resolve_selector(self, selector: Any) -> int:
-        NOT_FOUND = -2
-
-        if isinstance(selector, str):
-            match = re.search(r"\d+", selector)
-            if match:
-                return int(match.group(0))
-
-        elif isinstance(selector, int):
-            return selector
-
-        elif isinstance(selector, float):
-            return int(selector)
-
-        elif isinstance(selector, List):
-            for item in selector:
-                value = self._2_resolve_selector(item)
-                if value is not NOT_FOUND:
-                    return value
-
-        return NOT_FOUND
-
-    def _3_select_source(self, all_sources: List[str], selector: int) -> Optional[str]:
-        if 0 <= selector < len(all_sources):
-            return all_sources[selector]
-
-        try:
-            return all_sources[-1]
-
-        except IndexError:
-            return None
-
-    def _4_get_base64_data_source(
-        self,
-        source: Optional[str],
-    ) -> Optional[str]:
-        if not source:
-            return None
-
-        if source.startswith("data:") and ";base64," in source:
-            try:
-                return source.split(",", 1)[1]
-            except IndexError:
-                return None
-
-        return None
-
-    def execute(
-        self,
-        messages_history: List[Dict[str, Any]],
-        selector: Any,
-    ) -> str:
-        all_sources = self._1_extract_all_potential_image_sources(messages_history)
-        resolved_selector = self._2_resolve_selector(selector)
-        source = self._3_select_source(all_sources, resolved_selector)
-        base64_data = self._4_get_base64_data_source(source)
-
-        if base64_data:
-            return base64_data
-
-        raise ToolError("Could not get image as base64 data")
-
+        image_url: str,
+        positive_promt: str,
+        negative_promt: str,
+        denoise: float,
+    ):
+        self.result = f"""
+Image URL: {image_url}
+Positive Prompt: {positive_promt}
+Negative Prompt: {negative_promt}
+Denoise: {denoise}
+"""
 
 """ ===========================
 Tool
@@ -464,14 +471,20 @@ class Tools:
     class Valves(BaseModel):
         # Comfy Settings
         COMFYUI_API_BASEURL: str = Field(
-            default=EXAMPLE_API_BASEURL, description=EXAMPLE_API_BASEURL
+            default=EXAMPLE_API_BASEURL, 
+            description=EXAMPLE_API_BASEURL
         )
         COMFYUI_IMG2IMG_WORKFLOW_JSON: str = Field(
-            default=EXAMPLE_WORKFLOW_JSON, description="Enter workflow json here"
+            default=EXAMPLE_WORKFLOW_JSON, 
+            description="Enter workflow json here"
         )
         COMFYUI_IMG2IMG_NODE_DEFINE_JSON: str = Field(
             default=EXAMPLE_NODE_DEFINE_JSON,
-            description="Allowed labels: Model, Image, Width, Height, PositivePrompt, NegativePrompt, Seed, Steps",
+            description="Allowed labels: Model, Image, Width, Height, PositivePrompt, NegativePrompt, Seed, Steps, Denoise",
+        )
+        MODEL: str = Field(
+            default="", 
+            description="Model file name used for image generation"
         )
 
         # Request Settings
@@ -482,40 +495,123 @@ class Tools:
             default=5, description="Request Interval (sec)"
         )
 
+        pass
+
+    class UserValves(BaseModel):
+        IMAGE_WIDTH: int = Field(
+            default=EXAMPLE_WIDTH, 
+            description="Width of the generated image"
+        )
+        IMAGE_HEIGHT: int = Field(
+            default=EXAMPLE_HEIGHT, 
+            description="Height of the generated image"
+        )
+        SEED: int = Field(
+            default=EXAMPLE_SEED, 
+            description="Seed for image generation"
+        )
+        STEPS: int = Field(
+            default=EXAMPLE_STEPS, 
+            description="Steps for image generation"
+        )
+        DENOISE_OVERRIDE: float = Field(
+            default=EXAMPLE_DENOISE_OVERRIDE, 
+            description="Override denoise of images to be generated. (Override disabled at 0.0)"
+        )
+        MODEL_OVERRIDE: str = Field(
+            default="", 
+            description="Override model file name used for image generation"
+        )
+        POSITIVE_SYSTEM_PROMPT: str = Field(
+            default=EXAMPLE_POSITIVE_SYSTEM_PROMPT, 
+            description="Positive system prompts used for image generation"
+        )
+        NEGATIVE_SYSTEM_PROMPT: str = Field(
+            default=EXAMPLE_NEGATIVE_SYSTEM_PROMPT, 
+            description="Negative system prompts used for image generation"
+        )
+        
+        pass
+
     def __init__(self):
         self.valves = self.Valves()
 
     async def img2img(
         self,
-        prompt: str,
         image_selector: Any,
-        __messages__: List[Dict[str, Any]],
-        __event_emitter__: Callable[[dict], Any],
+        positive_prompt: str,
+        negative_prompt: str,
+        denoise: float,
+        __user__: dict,
+        __messages__: Optional[List[Dict[str, Any]]] = None,
+        __event_emitter__: Optional[Callable[[dict], Any]] = None,
     ) -> str:
         """
         Generate an image from a given prompt and a number of attached images
 
-        :param prompt: Prompts described in English used for image generation
         :param image_selector: Index for selecting an image source from history.
-        :return Generated image and parameters used to generate it. The image must be included in the response.
+                               0 is the first image attached, 1 is the second image attached.
+                               If not specified, the most recently attached image will be used.
+
+        :param positive_prompt: Positive prompt used to generate the image, which describes desired elements in the image.
+                                Instructions that are more important can be coordinated by enclosing them in parentheses ().
+                                Instructions enumerated in the prompt must be in English.
+
+        :param negative_prompt: Negative prompts used to generate the image, which describes undesired elements in the image.
+                                Instructions that are more important can be coordinated by enclosing them in parentheses ().
+                                Instructions enumerated in the prompt must be in English.
+                                
+        :param denoise: A value indicating how much the generated image differs from the original image. 
+                        The range is from 0.0 to 1.0. It gets more different each closer to 1.0. 
+                        0.0 is exactly same as the original image, and 1.0 is completely different from the original image.
+                        If not specified, about 0.7 is just right.
+
+        :return URL of the generated image in markup format and parameters used to generate it. 
+                The image URL must always be included in the response and shown to the user.
         """
 
-        event_emitter = EventEmitter(__event_emitter__)
-
         try:
-            # 1. Retrieve image data as base64
-            base64_image_procesor = Base64ImageProcesor()
-            base64_data = base64_image_procesor.execute(__messages__, image_selector)
+            # 1. Resolve Parameters
+            user_valves        = __user__["valves"]
+            parameter_rosolver = ParameterResolver()
+            resolved_image_selector  = parameter_rosolver.resolve_image_selector(image_selector)
+            resolved_model           = parameter_rosolver.resolve_model(self.valves.MODEL, user_valves.MODEL_OVERRIDE)
+            resolved_denoise         = parameter_rosolver.resolve_denoise(denoise, user_valves.DENOISE_OVERRIDE)
+            resolved_positive_prompt = parameter_rosolver.resolve_prompt(user_valves.POSITIVE_SYSTEM_PROMPT, positive_prompt)
+            resolved_negative_prompt = parameter_rosolver.resolve_prompt(user_valves.NEGATIVE_SYSTEM_PROMPT, negative_prompt)
+            resolved_seed            = parameter_rosolver.resolve_seed(user_valves.SEED)
 
-            # 2. Execute workflow
-            workflow_procesor = WorkflowProcesor(
+            # 2. Resolve image base64 data
+            base64_data = Base64ImageResolver().resolve(__messages__, resolved_image_selector)
+
+            # 3. Execute workflow
+            procesor = WorkflowProcesor(
                 self.valves.COMFYUI_API_BASEURL,
                 self.valves.COMFYUI_IMG2IMG_WORKFLOW_JSON,
                 self.valves.COMFYUI_IMG2IMG_NODE_DEFINE_JSON,
                 self.valves.REQUEST_TIMEOUT_SECONDS,
                 self.valves.REQUEST_INTERVAL_SECONDS,
             )
-            return await workflow_procesor.execute(prompt, base64_data)
+            procesor.build(
+                base64_data,
+                resolved_positive_prompt,
+                resolved_negative_prompt,
+                resolved_denoise,
+                resolved_model,
+                resolved_seed,
+                user_valves.STEPS,
+                user_valves.IMAGE_WIDTH,
+                user_valves.IMAGE_HEIGHT,
+            )
+            image_url = await procesor.execute()
+
+            # 4. Return result
+            return ResultFormatter(
+                image_url, 
+                positive_prompt, 
+                negative_prompt, 
+                resolved_denoise
+            ).result
 
         except ToolError as e:
             return f"{e}"
