@@ -553,11 +553,11 @@ class Tools:
                                0 is the first image attached, 1 is the second image attached.
                                If not specified, the most recently attached image will be used.
 
-        :param positive_prompt: Positive prompt used to generate the image, which describes desired elements in the image.
+        :param positive_prompt: Positive prompt described in english, used to generate the image, which describes desired elements in the image.
                                 Instructions that are more important can be coordinated by enclosing them in parentheses ().
                                 Instructions enumerated in the prompt must be in English.
 
-        :param negative_prompt: Negative prompts used to generate the image, which describes undesired elements in the image.
+        :param negative_prompt: Negative prompts described in english, used to generate the image, which describes undesired elements in the image.
                                 Instructions that are more important can be coordinated by enclosing them in parentheses ().
                                 Instructions enumerated in the prompt must be in English.
                                 
