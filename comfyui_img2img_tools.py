@@ -547,7 +547,7 @@ class Tools:
         __event_emitter__: Optional[Callable[[dict], Any]] = None,
     ) -> str:
         """
-        Generate an image from a given prompt and a number of attached images
+        Generates an image from the specified English prompt and the attached image.
 
         :param image_selector: Index for selecting an image source from history.
                                0 is the first image attached, 1 is the second image attached.
